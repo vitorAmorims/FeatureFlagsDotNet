@@ -1,0 +1,312 @@
+Feature Flags in ASP.NET Core
+
+Being able to conditionally enable or disable features in our applications without redeploying our code is a powerful tool that we can take advantage of to quickly iterate on new features in our applications. In this article, we are going to learn about Feature Flags in ASP.NET Core, and how we can use them to turn features on or off dynamically.
+
+What are Feature Flags?
+
+Feature Flags are a software development technique that allows us to essentially wrap our application features in a conditional statement, providing a toggle to enable or disable the feature. Most importantly, we can toggle features during runtime, meaning that we do not need to redeploy our application to enable a new feature or disable an old or broken feature.
+
+Ways to Toggle a Feature Flag
+
+In ASP.NET Core, we have different ways to define feature flags, using feature flag filters.
+
+As mentioned, the simplest form is a boolean true/false feature filter.
+
+The next type is a time-based filter. The feature is only enabled between the start and end times defined.
+
+Another option is to use a percentage feature filter. With this, the percentage defined determines the probability that the feature is enabled.
+
+Finally, within ASP.NET Core, we have the targeting filter. This filter allows us to define rules for feature enablement based on a target audience, so users or groups that access our application. Once a user receives a feature, they will continue to do so, as targeting filters are sticky.
+
+Of course, we can always create our own custom feature filters should the built-in ones not meet our requirements.
+
+Benefits of Feature Flags
+
+Feature Flags are a powerful tool that allows us to change the behavior of our application at runtime without the need to redeploy. This provides many benefits.
+
+Firstly, we can deploy new features into production environments in a disabled state, sometimes known as dark deployments. The benefit of this is that we can ensure our new feature doesn’t adversely affect the rest of the application before we enable it for all of our users.
+
+Canary deployments are also another benefit that feature flags provide us, which determines how well a new feature works. We can slowly increase the usage of our new feature, to ensure there are no performance implications or any other bugs in the code. We can then enable the feature for all users when we are happy it is stable.
+
+A/B testing is similar to canary deployments, but the objective of them is to determine the users’ response to a new feature. For example, we could develop a new UI, and only allow a certain group or percentage of users to use the new interface, to see if they prefer it over the previous UI.
+
+Overall, feature flags allow us to minimize the risk of deploying new features to our application. Without disruptive changes to our users, we can enable or disable a feature in case of any performance or other issues.
+
+Enabling Feature Flags in ASP.NET Core Application
+
+To understand how we can use Feature Flags in our applications, let’s create an ASP.NET Core application and add some feature management.
+
+Creating Application
+
+We’ll start with a new Web API application, either by selecting it in Visual Studio project templates or running the dotnet new webapi -n FeatureFlags command.
+
+The first thing we must do is add the Microsoft.FeatureManagement.AspNetCore NuGet package. The FeatureManagement library manages the feature flag lifecycle behind the scenes. This gives us the ability to change feature flags at runtime without needing to restart the application.
+
+Adding a Feature Flag
+
+With our application created, let’s add a feature filter to appsettings.json:
+
+"FeatureManagement": {
+    "BooleanFilter": true
+}
+
+[Route("api/[controller]")]
+[ApiController]
+public class FeatureFlagController : ControllerBase
+{
+    private readonly IFeatureManager _featureManager;
+
+    public FeatureFlagController (IFeatureManager featureManager)
+    {
+        _featureManager = featureManager;
+    }
+
+    [HttpGet("BooleanFilter")]
+    public async Task<IActionResult> BooleanFilter()
+    {
+        if (await _featureManager.IsEnabledAsync("BooleanFilter"))
+        {
+            return Ok("Feature enabled");
+        }
+        else
+        {
+            return BadRequest("Feature not enabled");
+        }
+    }
+}
+
+The final thing we need to do is register the FeatureManagment package in the Program class:
+
+builder.Services.AddFeatureManagement();
+
+Enhancing Our Feature Flag
+
+Let’s introduce a percentage-based filter. In appsettings.json, we’ll add a new filter:
+
+"PercentageFilter": {
+    "EnabledFor": [
+        {
+            "Name": "Percentage",
+            "Parameters": {
+                "Value":  50
+            }
+        }
+    ]
+}
+
+[HttpGet("PercentageFilter")]
+public async Task<IActionResult> PercentageFilter()
+{
+    if (await _featureManager.IsEnabledAsync("PercentageFilter"))
+    {
+        return Ok("Feature enabled");
+    }
+    else
+    {
+        return BadRequest("Feature not enabled");
+    }
+}
+
+builder.Services.AddFeatureManagement()
+    .AddFeatureFilter<PercentageFilter>();
+
+Custom Filter
+
+Should the built-in feature filters not be sufficient for our use case, we have the flexibility to write custom filters by implementing the IFeatureFilter interface.
+
+Let’s write a custom filter that only allows clients who have a specific language set to use the feature.
+
+We’ll start by adding our desired configuration to appsettings.json:
+
+"CustomFilter": {
+    "EnabledFor": [
+        {
+            "Name": "LanguageFilter",
+            "Parameters": {
+                "AllowedLanguages": [
+                    "en-GB",
+                    "en-US"
+                ]
+            }
+        }
+    ]
+}
+
+[FilterAlias(nameof(LanguageFilter))]
+public class LanguageFilter : IFeatureFilter
+{
+    private readonly IHttpContextAccessor _httpContextAccessor;
+
+    public LanguageFilter(IHttpContextAccessor httpContextAccessor)
+    {
+        _httpContextAccessor = httpContextAccessor;
+    }
+
+    public Task<bool> EvaluateAsync(FeatureFilterEvaluationContext context)
+    {
+        var userLanguage = _httpContextAccessor.HttpContext.Request.Headers["Accept-Language"].ToString();
+        var settings = context.Parameters.Get<LanguageFilterSettings>();
+        return Task.FromResult(settings.AllowedLanguages.Any(a => userLanguage.Contains(a)));
+    }
+}
+
+Finally, let’s create the LanguageFilterSettings class to store the AllowedLanguages array:
+
+public class LanguageFilterSettings
+{
+    public string[] AllowedLanguages { get; set; }
+}
+
+builder.Services.AddFeatureManagement()
+    .AddFeatureFilter<PercentageFilter>()
+    .AddFeatureFilter<LanguageFilter>();
+
+builder.Services.AddHttpContextAccessor();
+
+[HttpGet("CustomFilter")]
+public async Task<IActionResult> CustomFilter()
+{
+    if (await _featureManager.IsEnabledAsync("CustomFilter"))
+    {
+        return Ok("Feature enabled");
+    }
+    else
+    {
+        return BadRequest("Feature not enabled");
+    }
+}
+
+Time Window Filter
+
+If we want a feature to only be enabled during a certain time window, we have the TimeWindowFilter to achieve this.
+
+Let’s add a TimeWindowFilter to our application. First, we register the filter:
+
+builder.Services.AddFeatureManagement()
+    .AddFeatureFilter<PercentageFilter>()
+    .AddFeatureFilter<CustomFilter>()  
+    .AddFeatureFilter<TimeWindowFilter>();
+
+In appsettings.json, we define the configuration for this filter:
+
+"FeatureManagement": {
+    // other filters
+    "TimeWindowFilter": {
+        "EnabledFor": [
+            {
+                "Name": "TimeWindow",
+                "Parameters": {
+                    "Start": "2022-09-04T10:00:00+00:00",
+                    "End": "2022-09-04T11:00:00+00:00"
+                }
+             }
+        ]
+    }
+}
+
+[HttpGet("TimeWindowFilter")]
+public async Task<IActionResult> TimeWindowFilter()
+{
+    if (await _featureManager.IsEnabledAsync("TimeWindowFilter"))
+    {
+        return Ok("Feature enabled");
+    }
+    else
+    {
+        return BadRequest("Feature not enabled");
+    }
+}
+
+To test, let’s navigate to /FeatureFlag/TimeWindowFilter. Obviously, depending on the time zone you are currently in, the start and end window may need adjusting to receive an Ok result.
+
+Targeting Filter
+
+Targeting filters allow us to enable a feature for certain users or groups.  Let’s have a look at how to define a targeting filter in ASP.NET Core. We won’t actually implement this in our application, as we don’t have any authentication methods enabled.
+
+As with the percentage filter, we need to register the targeting filter:
+
+builder.Services.AddFeatureManagement()
+    .AddFeatureFilter<TargetingFilter>();
+
+As with the percentage filter, we need to register the targeting filter:
+
+builder.Services.AddFeatureManagement()
+    .AddFeatureFilter<TargetingFilter>();
+
+"FeatureManagement": {
+  "TargetingFilter": {
+    "EnabledFor": [
+      {
+        "Name": "Targeting",
+        "Parameters": {
+          "Audience": {
+            "Users": [
+              "user@code-maze.com"
+            ]
+          }
+        }
+      }
+    ]      
+  }
+
+As well as targeting users, we can have more flexibility by targeting groups. This time, in appsettings.json, we define an array for groups:
+
+"FeatureManagement": {
+  "TargetingFilter": {
+    "EnabledFor": [
+      {
+        "Name": "Targeting",
+        "Parameters": {
+          "Audience": {
+            "Users": [],
+            "Groups": [
+                {
+                    "Name": "Beta Testers",
+                    "RolloutPercentage":  20
+                }
+            ]
+          }
+        }
+      }
+    ]      
+  }
+
+
+
+Other Ways to Define Feature Flags
+
+So far, we have checked for the status of Feature Flags by using the IFeatureManager interface and defining an if else block. This isn’t the only method available to us, so let’s look at some other ways to check our Feature Flags status.
+
+FeatureGate Attribute
+In ASP.NET Core, we have the ability to wrap endpoints or full controllers in feature toggles, using the FeatureGate attribute:
+
+[FeatureGate("BooleanFilter")]
+public async Task<IActionResult> BooleanFilter()
+Here, we add the FeatureGate attribute to our BooleanFilter endpoint, and use the BooleanFilter feature flag we previously defined.
+
+When we navigate to /FeatureFlag/BooleanFilter and the feature is disabled, we receive a 404 NotFound. This is the default status code, but we can configure it to return whatever we’d like.
+
+Middleware
+If we have a more comprehensive feature, that includes changes to our application middleware, we can conditionally add this with Feature Flags:
+
+app.UseMiddlewareForFeature<MyMiddlewareFeature>("MyMiddlewareFeatureFlag");
+With this, MyMiddlewareFeature will only be added to the pipeline if MyMiddlewareFeatureFlag is enabled.
+
+
+
+MVC Views
+When building MVC applications, we may like to conditionally show or hide UI based on the status of a feature flag filter. Fortunately, ASP.NET Core provides a simple method to do so:
+
+<feature name="MyUIFeature">
+    <p>Content displayed if 'MyUIFeature' is enabled.</p>
+</feature>
+This also requires the following tag helper to be added to _ViewImports.cshtml:
+
+@addTagHelper *, Microsoft.FeatureManagement.AspNetCore
+
+Azure App Configuration
+Throughout this article, we looked at configuring feature flags locally, using appsettings.json. This is fine for local development, but when we deploy our application, this isn’t the most ideal scenario. Instead, we can use something like Azure App Configuration to manage our feature flags independently. This is preferential as we are provided with a UI for managing our features, and means we don’t need to manually alter the appsettings.json file of our application.
+
+https://code-maze.com/aspnetcore-feature-flags/
+
+
